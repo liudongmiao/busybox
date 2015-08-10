@@ -1,0 +1,99 @@
+#!/bin/bash
+# Build Busybox against Android's bionic
+# Originally by Dan Fandrich
+#
+# Configure with "make android_defconfig"
+#
+
+# Point this to the Android root directory; it's used in the defconfig CFLAGS
+if [ x"$ANDROID_SOURCE" == x"" ]; then
+    echo "please specify ANDROID_SOURCE" >&2
+    exit
+fi
+export A="$ANDROID_SOURCE"
+if [ ! -d "$A/prebuilt" -a ! -d "$A/prebuilts" ]; then
+    echo "please install prebuilt" >&2
+    exit
+fi
+
+# Android product being built
+P=generic
+
+# Toolchain version in use by this version of Android
+
+HOST=`uname -s | tr 'A-Z' 'a-z'`
+if [ -f "$A/system/core/include/arch/linux-arm/AndroidConfig.h" ]; then
+    export TOOL=$A/prebuilt/$HOST-x86/toolchain/`ls $A/prebuilt/$HOST-x86/toolchain/ | grep arm-eabi | tail -n 1`/bin
+    if [[ "$1" == *config ]]; then
+        cp configs/android_defconfig{,.bak}
+        sed -i -e 's:system/core/include/arch/linux-arm/AndroidConfig.h:system/core/include/arch/linux-arm/AndroidConfig.h -I$A/bionic/libc/dns/include -I$A/bionic/libc/dns/resolv -I$A/bionic/libc/netbsd/resolv -I$A/bionic/libc/private:g' configs/android_defconfig
+    fi
+else
+    export TOOL=$A/prebuilts/gcc/$HOST-x86/arm/`ls $A/prebuilts/gcc/$HOST-x86/arm/ | grep arm-linux-androideabi | tail -n 1`/bin
+    alias arm-eabi-gcc='arm-linux-androideabi-gcc'
+    if [[ "$1" == *config ]]; then
+        cp configs/android_defconfig{,.bak}
+        sed -i  -e 's:\(CONFIG_CROSS_COMPILER_PREFIX\)=.*:\1="arm-linux-androideabi-":g' \
+                -e 's:system/core/include/arch/linux-arm/AndroidConfig.h:build/core/combo/include/arch/linux-arm/AndroidConfig.h -I$A/bionic/libc/kernel/uapi -I$A/bionic/libc/kernel/uapi/asm-arm -I$A/bionic/libc/dns/include -I$A/bionic/libc/dns/resolv -I$A/bionic/libc/netbsd/resolv -I$A/bionic/libc/private -pie -fPIE -Wno-undef:g' configs/android_defconfig
+    fi
+fi
+
+export PATH="/usr/loca/bin:$TOOL:$PATH"
+
+if ! sed --help 2>/dev/null | grep -i gnu >/dev/null 2>&1; then
+    echo "only support gnu sed" >&2
+    exit
+fi
+
+# Set the linker flags; compiler flags are in the defconfig file
+if grep "^CONFIG_STATIC=y" .config >/dev/null 2>&1; then
+    # Static linking
+    LDFLAGS="-static -Xlinker -z -Xlinker muldefs -nostdlib $A/out/target/product/$P/obj/lib/crtbegin_static.o $A/out/target/product/$P/obj/lib/crtend_android.o -L$A/out/target/product/$P/obj/lib -L$A/out/target/product/$P/obj/STATIC_LIBRARIES/libm_intermediates -L$A/out/target/product/$P/obj/STATIC_LIBRARIES/libc_intermediates"
+    LDLIBS="m c gcc"
+else
+    # Dynamic linking
+    LDFLAGS="-Xlinker -z -Xlinker muldefs -nostdlib -Bdynamic -Xlinker -dynamic-linker -Xlinker /system/bin/linker -Xlinker -z -Xlinker nocopyreloc -Xlinker --no-undefined $A/out/target/product/$P/obj/lib/crtbegin_dynamic.o $A/out/target/product/$P/obj/lib/crtend_android.o -L$A/out/target/product/$P/obj/lib"
+    LDLIBS="dl m c gcc"
+fi
+
+# modified by Thom Liu
+# .S -> .o
+AFLAGS="-D__ANDROID__ -I$A/bionic/libc/kernel/arch-arm -I$A/bionic/libc/kernel/common -I$A/bionic/libc/arch-arm/include -I$A/bionic/libc/include -I$A/bionic/libc -I$A/bionic/libc/kernel/uapi/asm-arm"
+
+# for nslookup to include private headers
+NOSTDINC_FLAGS="-I$A/bionic/libc -Wno-shadow"
+
+make EXTRA_LDFLAGS="$LDFLAGS" LDLIBS="$LDLIBS" AFLAGS="$AFLAGS" NOSTDINC_FLAGS="$NOSTDINC_FLAGS" "$@"
+
+if [[ "$1" == *config ]]; then
+    sed -i -e 's:\(CONFIG_MDEV\)=y:# \1 is not set:g' \
+        -e 's:\(CONFIG_FEATURE_TOUCH_NODEREF\)=y:# \1 is not set:g' \
+        -e 's:\(CONFIG_ROUTE\)=y:# \1 is not set:g' \
+        -e 's:\(CONFIG_ARP\)=y:# \1 is not set:g' \
+        -e 's:\(CONFIG_IFCONFIG\)=y:# \1 is not set:g' \
+        -e 's:\(CONFIG_IFENSLAVE\)=y:# \1 is not set:g' \
+        -e 's:# \(CONFIG_NSLOOKUP\) is not set:\1=y:g' \
+        -e 's:# \(CONFIG_SHOW_USAGE\) is not set:\1=y:g' \
+        -e 's:# \(CONFIG_ASH\) is not set:\1=y:g' \
+        -e 's:# \(CONFIG_FEATURE_SH_IS_ASH\) is not set:\1=y:g' \
+        -e 's:\(CONFIG_FEATURE_SH_IS_NONE\)=y:# \1 is not set:g' \
+        -e 's:# \(CONFIG_DF\) is not set:\1=y:g' \
+        -e 's:# \(CONFIG_FEATURE_DEVPTS\) is not set:\1=y:g' \
+        -e 's:# \(CONFIG_HOSTNAME\) is not set:\1=y:g' \
+        -e 's:# \(CONFIG_PS\) is not set:\1=y:g' \
+        -e 's:# \(CONFIG_PGREP\) is not set:\1=y:g' \
+        -e 's:# \(CONFIG_KILL\) is not set:\1=y:g' \
+        -e 's:# \(CONFIG_KILLALL\) is not set:\1=y:g' \
+        -e 's:# \(CONFIG_KILLALL5\) is not set:\1=y:g' \
+        -e 's:# \(CONFIG_PKILL\) is not set:\1=y:g' \
+        -e 's:# \(CONFIG_STAT\) is not set:\1=y:g' \
+        -e 's:# \(CONFIG_MOUNT\) is not set:\1=y:g' \
+        -e 's:# \(CONFIG_FEATURE_MOUNT_FLAGS\) is not set:\1=y:g' \
+        -e 's:# \(CONFIG_UMOUNT\) is not set:\1=y:g' \
+        -e 's:# \(CONFIG_ID\) is not set:\1=y:g' \
+        -e 's:# \(CONFIG_USE_BB_CRYPT\) is not set:\1=y:g' \
+        .config
+    if [ -f configs/android_defconfig.bak ]; then
+        mv configs/android_defconfig.bak configs/android_defconfig
+    fi
+fi

@@ -28,6 +28,17 @@
 #include <resolv.h>
 #include "libbb.h"
 
+#ifdef __ANDROID__
+#include <dlfcn.h>
+#ifndef _ARPA_NAMESER_H_
+typedef struct ns_tsig_key ns_tsig_key;
+typedef struct ns_class ns_class;
+#endif
+#include <resolv_private.h>
+#include <res_private.h>
+static struct __res_state* _nres;
+#endif
+
 /*
  * I'm only implementing non-interactive mode;
  * I totally forgot nslookup even had an interactive mode.
@@ -91,6 +102,9 @@ static int print_host(const char *hostname, const char *header)
 			dotted = xmalloc_sockaddr2dotted_noport(cur->ai_addr);
 			revhost = xmalloc_sockaddr2hostonly_noport(cur->ai_addr);
 
+			if (dotted == NULL) {
+				break;
+			}
 			printf("Address %u: %s%c", ++cnt, dotted, revhost ? ' ' : '\n');
 			if (revhost) {
 				puts(revhost);
@@ -113,17 +127,37 @@ static int print_host(const char *hostname, const char *header)
 	return (rc != 0);
 }
 
+#ifdef __ANDROID__
+static struct __res_state* get_nres(void)
+{
+	void *libc = dlopen("libc.so", RTLD_NOW);
+	return (struct __res_state*) dlsym(libc, "_nres");
+}
+#endif
+
 /* lookup the default nameserver and display it */
 static void server_print(void)
 {
 	char *server;
 	struct sockaddr *sa;
 
+#ifdef __ANDROID__
+	/* ref bionic/libc/netbsd/resolv/res_init.c */
+	if ((_nres = get_nres()) == NULL) {
+		return;
+	}
+	if (_nres->_u._ext.ext) { /* doesn't disable ipv6 */
+		sa = (struct sockaddr *)&_nres->_u._ext.ext->nsaddrs[0];
+	} else {
+		sa = (struct sockaddr *)&_nres->nsaddr_list[0];
+	}
+#else
 #if ENABLE_FEATURE_IPV6
 	sa = (struct sockaddr*)_res._u._ext.nsaddrs[0];
 	if (!sa)
 #endif
 		sa = (struct sockaddr*)&_res.nsaddr_list[0];
+#endif
 	server = xmalloc_sockaddr2dotted_noport(sa);
 
 	print_host(server, "Server:");
@@ -144,6 +178,25 @@ static void set_default_dns(const char *server)
 	/* NB: this works even with, say, "[::1]:5353"! :) */
 	lsa = xhost2sockaddr(server, 53);
 
+#ifdef __ANDROID__
+	/* ref bionic/libc/netbsd/resolv/res_init.c */
+	if ((_nres = get_nres()) == NULL) {
+		return;
+	}
+	if (!lsa) {
+		return;
+	}
+	if (_nres->_u._ext.ext && /* doesn't disable ipv6 */
+			(size_t)lsa->len <= sizeof(_nres->_u._ext.ext->nsaddrs[0])) {
+		memcpy(&_nres->_u._ext.ext->nsaddrs[0], &lsa->u.sa, lsa->len);
+	}
+	if ((size_t)lsa->len <= sizeof(_nres->nsaddr_list[0])) {
+		memcpy(&_nres->nsaddr_list[0], &lsa->u.sa, lsa->len);
+	} else {
+		_nres->nsaddr_list[0].sin_family = 0;
+	}
+	_nres->nscount = 1;
+#else
 	if (lsa->u.sa.sa_family == AF_INET) {
 		_res.nscount = 1;
 		/* struct copy */
@@ -163,6 +216,7 @@ static void set_default_dns(const char *server)
 		_res._u._ext.nsaddrs[0] = &lsa->u.sin6;
 		/* must not free(lsa)! */
 	}
+#endif
 #endif
 }
 
