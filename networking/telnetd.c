@@ -492,6 +492,9 @@ int telnetd_main(int argc UNUSED_PARAM, char **argv)
 	};
 #endif
 	INIT_G();
+#ifdef __ANDROID__
+	G.loginpath = "/system/bin/sh";
+#endif
 
 	/* -w NUM, and implies -F. -w and -i don't mix */
 	IF_FEATURE_TELNETD_INETD_WAIT(opt_complementary = "wF:w+:i--w:w--i";)

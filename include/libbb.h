@@ -28,7 +28,17 @@
 #endif
 #include <stdint.h>
 #include <stdio.h>
+#ifdef __ANDROID__
+#define abs _abs
+#define labs _labs
+#define llabs _llabs
+#endif
 #include <stdlib.h>
+#ifdef __ANDROID__
+#undef abs
+#undef labs
+#undef llabs
+#endif
 #include <stdarg.h>
 #include <stddef.h>
 #include <string.h>
@@ -234,6 +244,14 @@ PUSH_AND_SET_FUNCTION_VISIBILITY_TO_HIDDEN
  * we need a few helper #defines (below) and careful use of off_t
  * instead of int/ssize_t. No lseek64(), O_LARGEFILE etc necessary */
 #if ENABLE_LFS
+/*
+  For similar reasons, off_t is 32-bit. We define loff_t as the 64-bit variant
+  due to BSD inheritance, but off64_t should be available as a typedef to ease
+  porting of current Linux-specific code.
+*/
+#ifdef __ANDROID__
+#define off_t loff_t
+#endif
 /* CONFIG_LFS is on */
 # if ULONG_MAX > 0xffffffff
 /* "long" is long enough on this system */
